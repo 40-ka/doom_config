@@ -40,15 +40,25 @@
       (apply fn args)))
   (advice-add 'sp-delete-pair :around #'my/sp-delete-pair-indent-match))
 
-(after! smartparens
-  (sp-local-pair '(rust-mode rustic-mode) "'" "'"
-                 :unless '(:add my/sp-rust-lifetime-p))
-  ;; < не закрываем автоматически.
-  (sp-local-pair '(rust-mode rustic-mode) "<" ">" :actions nil)
+(defun my/disable-rust-angle-pair ()
+  (when (bound-and-true-p smartparens-mode)
+    (sp-local-pair major-mode "<" ">" :actions nil)
+    (setq-local sp-local-pairs
+                (mapcar (lambda (p)
+                          (if (equal (plist-get p :open) "<")
+                              (plist-put (copy-sequence p) :actions nil)
+                            p))
+                        sp-local-pairs))))
 
-  ;; RET между { } разворачивает в пустую строку тела и переносит } вниз.
-  (sp-local-pair '(rust-mode rustic-mode) "{" nil
-                 :post-handlers '(("||\n[i]" "RET"))))
+
+(after! smartparens
+  (dolist (mode '(rust-mode rustic-mode rust-ts-mode))
+    (when (fboundp 'my/sp-rust-lifetime-p)
+      (sp-local-pair mode "'" "'" :unless '(:add my/sp-rust-lifetime-p)))
+    (sp-local-pair mode "{" nil :post-handlers '(("||\n[i]" "RET")))))
+
+(add-hook 'smartparens-enabled-hook #'my/disable-rust-angle-pair 95)
+
 
 
 ;; Отступ строки делает основной буфер: у indirect-буфера нет функции отступа режима.

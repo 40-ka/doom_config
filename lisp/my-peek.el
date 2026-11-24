@@ -391,11 +391,13 @@
 (defun my/peek--enable-sp (origin)
   (when (fboundp 'smartparens-mode)
     (set-syntax-table (with-current-buffer origin (syntax-table)))
+    (setq-local parse-sexp-lookup-properties t)
     (setq-local indent-line-function #'my/indent-line-by-previous)
     (smartparens-mode 1)
     ;; Пары берём готовым списком из основного буфера, чтобы поведение совпадало.
     (setq-local sp-local-pairs
                 (copy-tree (buffer-local-value 'sp-local-pairs origin)))))
+
 
 (defun my/peek-line ()
   "Открыть рамку с кареткой и соседними строками; повторный вызов закрывает."

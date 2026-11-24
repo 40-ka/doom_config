@@ -1,0 +1,979 @@
+;;; $DOOMDIR/config.el -*- lexical-binding: t; -*-
+
+;; Place your private configuration here! Remember, you do not need to run 'doom
+;; sync' after modifying this file!
+
+
+;; Some functionality uses this to identify you, e.g. GPG configuration, email
+;; clients, file templates and snippets. It is optional.
+;; (setq user-full-name "John Doe"
+;;       user-mail-address "john@doe.com")
+
+;; Doom exposes five (optional) variables for controlling fonts in Doom:
+;;
+;; - `doom-font' -- the primary font to use
+;; - `doom-variable-pitch-font' -- a non-monospace font (where applicable)
+;; - `doom-big-font' -- used for `doom-big-font-mode'; use this for
+;;   presentations or streaming.
+;; - `doom-symbol-font' -- for symbols
+;; - `doom-serif-font' -- for the `fixed-pitch-serif' face
+;;
+;; See 'C-h v doom-font' for documentation and more examples of what they
+;; accept. For example:
+;;
+;;(setq doom-font (font-spec :family "Fira Code" :size 12 :weight 'semi-light)
+;;      doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
+;;
+;; If you or Emacs can't find your font, use 'M-x describe-font' to look them
+;; up, `M-x eval-region' to execute elisp code, and 'M-x doom/reload-font' to
+;; refresh your font settings. If Emacs still can't find your font, it likely
+;; wasn't installed correctly. Font issues are rarely Doom issues!
+
+;; There are two ways to load a theme. Both assume the theme is installed and
+;; available. You can either set `doom-theme' or manually load a theme with the
+;; `load-theme' function. This is the default:
+(setq doom-theme 'doom-one)
+;; Specify both a dark and light theme, like so and Doom will choose which one
+;; to load based on your system light/dark setting:
+;;
+;;   (setq doom-theme '(doom-one   . doom-one-light))   ; (DARK . LIGHT)
+;;
+;; If you want more pro-active theme switching based on OS light/dark mode, look
+;; up the `auto-dark' package.
+
+;; This determines the style of line numbers in effect. If set to `nil', line
+;; numbers are disabled. For relative line numbers, set this to `relative'.
+(setq display-line-numbers-type t)
+
+;; If you use `org' and don't want your org files in the default location below,
+;; change `org-directory'. It must be set before org loads!
+(setq org-directory "~/org/")
+
+
+;; Whenever you reconfigure a package, make sure to wrap your config in an
+;; `with-eval-after-load' block, otherwise Doom's defaults may override your
+;; settings. E.g.
+;;
+;;   (with-eval-after-load 'PACKAGE
+;;     (setq x y))
+;;
+;; The exceptions to this rule:
+;;
+;;   - Setting file/directory variables (like `org-directory')
+;;   - Setting variables which explicitly tell you to set them before their
+;;     package is loaded (see 'C-h v VARIABLE' to look them up).
+;;   - Setting doom variables (which start with 'doom-' or '+').
+;;
+;; Here are some additional functions/macros that will help you configure Doom.
+;;
+;; - `load!' for loading external *.el files relative to this one
+;; - `add-load-path!' for adding directories to the `load-path', relative to
+;;   this file. Emacs searches the `load-path' when you load packages with
+;;   `require' or `use-package'.
+;; - `map!' for binding new keys
+;;
+;; To get information about any of these functions/macros, move the cursor over
+;; the highlighted symbol at press 'K' (non-evil users must press 'C-c c k').
+;; This will open documentation for it, including demos of how they are used.
+;; Alternatively, use `C-h o' to look up a symbol (functions, variables, faces,
+;; etc).
+;;
+;; You can also try 'gd' (or 'C-c c d') to jump to their definition and see how
+;; they are implemented.
+(use-package! eldoc-mouse
+    :hook (eglot-managed-mode . eldoc-mouse-mode))
+
+;;; ------------------------------------------------------------------
+;;; Peek: рамка с соседними строками поверх приглушённого окна.
+;;; F8 или SPC o l открывает; j/k или стрелки двигают; Esc, q, C-g закрывают.
+;;; ------------------------------------------------------------------
+(require 'posframe)
+
+;; Fixating the state line height
+(after! doom-modeline
+  (setq doom-modeline-height 29))
+  
+;; Automatically save visited files after 1 second of inactivity.
+(use-package! files
+  :config
+  (setq auto-save-visited-interval 1)
+  (auto-save-visited-mode 1))  
+ 
+ 
+;; Убираем подсветку имени и значок изменённого буфера в строке состояния
+(after! doom-modeline
+  (setq doom-modeline-highlight-modified-buffer-name nil
+        doom-modeline-buffer-modification-icon nil))
+
+
+		
+
+;; Гасим только сообщения об успешном сохранении: не показываем и не пишем
+;; в *Messages*. Ошибки сохранения идут другим путём и остаются видны.
+(defun my/quiet-save-msg (fn &rest args)
+  (if (and (stringp (car args))
+           (string-match-p "\\`Wrote \\|C written\\'" (car args)))
+      (let ((inhibit-message t) (message-log-max nil))
+        (apply fn args))
+    (apply fn args)))
+(advice-add 'message :around #'my/quiet-save-msg)
+
+
+;; Reduce LSP update frequency while typing.
+(after! lsp-mode
+  (setq lsp-idle-delay 1.0
+        lsp-progress-function #'ignore))
+  
+;; Evil normal: x на пустой паре () {} [] удаляет обе скобки вместе с пробелами, табами и переводами строк между ними, на любом другом символе работает как обычный x.
+;; Заменяет sp-delete-char, который не удалял, а перепрыгивал через скобки.
+(defun my/evil-x-pair ()
+  (interactive)
+  (if (looking-at "([ \t\n]*)\\|{[ \t\n]*}\\|\\[[ \t\n]*\\]")
+      (delete-region (point) (match-end 0))
+    (call-interactively #'evil-delete-char)))
+
+(map! :n "x" #'my/evil-x-pair)
+
+
+;; Автоудаление пары через перевод строки только если отступ закрывающей скобки равен отступу строки с открывающей.
+(after! smartparens
+  (defun my/sp--closer-indent-matches-p ()
+    (let ((open-indent (current-indentation)))
+      (save-excursion
+        (and (re-search-forward "[^ \t\n]" nil t)
+             (progn (backward-char) (looking-at "[)}\\]]"))
+             (= (current-indentation) open-indent)))))
+  (defun my/sp-delete-pair-indent-match (fn &rest args)
+    (let ((sp-autodelete-pair
+           (and sp-autodelete-pair
+                (or (not (looking-at "[ \t]*\n"))
+                    (my/sp--closer-indent-matches-p)))))
+      (apply fn args)))
+  (advice-add 'sp-delete-pair :around #'my/sp-delete-pair-indent-match))
+
+
+(defconst my/peek--box "*peek-box*")
+(defvar my/peek--origin-window nil)
+(defvar my/peek--dimmed nil)
+
+(defvar my/peek-context 3
+  "Сколько строк показывать выше и ниже средней.")
+(defvar my/peek-scale 1.8
+  "Во сколько раз крупнее шрифт средней строки.")
+(defvar my/peek-dim-level 0.08
+  "Яркость приглушённого текста в основном окне: меньше = темнее.")
+(defvar my/peek-context-dim 0.15
+  "Яркость серых боковых строк в рамке: меньше = темнее, ближе к фону.")
+
+(defun my/peek--blend (fg bg k)
+  "Смешать цвета FG и BG; K = доля FG."
+  (let ((a (color-name-to-rgb fg))
+        (b (color-name-to-rgb bg)))
+    (when (and a b)
+      (apply #'color-rgb-to-hex
+             (append (cl-mapcar (lambda (x y) (+ (* k x) (* (- 1 k) y))) a b)
+                     '(2))))))
+
+(defun my/peek--dim-buffers ()
+  "Приглушить цвета текста во всех видимых буферах."
+  (let ((bg (face-background 'default nil t))
+        (seen nil))
+    (dolist (win (window-list nil 'no-mini))
+      (let ((buf (window-buffer win)))
+        (unless (memq buf seen)
+          (push buf seen)
+          (let (cookies)
+            (with-current-buffer buf
+              (dolist (face (face-list))
+                (let* ((fg (face-foreground face nil t))
+                       (new (and (stringp fg)
+                                 (my/peek--blend fg bg my/peek-dim-level))))
+                  (when new
+                    (push (face-remap-add-relative face :foreground new)
+                          cookies)))))
+            (push (cons buf cookies) my/peek--dimmed)))))))
+
+(defun my/peek--undim-buffers ()
+  "Вернуть прежние цвета во всех приглушённых буферах."
+  (dolist (entry my/peek--dimmed)
+    (when (buffer-live-p (car entry))
+      (with-current-buffer (car entry)
+        (mapc #'face-remap-remove-relative (cdr entry)))))
+  (setq my/peek--dimmed nil))
+
+(defun my/peek--fontify (beg end)
+  "Подсветить строки BEG..END в основном буфере с полным контекстом файла."
+  (let ((base (or (buffer-base-buffer) (current-buffer))))
+    (with-current-buffer base
+      (save-restriction
+        (widen)
+        (font-lock-ensure beg end)))))
+
+(defun my/peek--trim-indent ()
+  "Скрыть общую для всех строк рамки часть отступа (невидимый текст)."
+  (let ((min-ind nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (skip-chars-forward " \t")
+        (unless (eolp)
+          (let ((ind (current-column)))
+            (setq min-ind (if min-ind (min min-ind ind) ind))))
+        (forward-line 1)))
+    (when (and min-ind (> min-ind 0))
+      (save-excursion
+        (goto-char (point-min))
+        (while (not (eobp))
+          (let ((b (point)))
+            (skip-chars-forward " \t")
+            (unless (eolp)
+              (let ((e (point)))
+                (goto-char b)
+                (move-to-column min-ind)
+                (when (> (current-column) min-ind)
+                  (backward-char))
+                (when (> (point) b)
+                  (let ((ov (make-overlay b (point))))
+                    (overlay-put ov 'my-peek t)
+                    (overlay-put ov 'invisible t)))
+                (goto-char e))))
+          (forward-line 1))))))
+
+
+(defun my/peek--render (col)
+  "Показать строки вокруг текущей: текущая посередине и с подсветкой, остальные серые."
+  (let ((n my/peek-context) above below beg end)
+    (widen)
+    (remove-overlays (point-min) (point-max) 'my-peek t)
+    (save-excursion
+      (beginning-of-line)
+      (setq above (min n (count-lines (point-min) (point))))
+      (forward-line (- above))
+      (setq beg (point)))
+    (save-excursion
+      (end-of-line)
+      (setq below (if (>= (point) (point-max))
+                      0
+                    (min n (count-lines (1+ (point)) (point-max)))))
+      (forward-line below)
+      (end-of-line)
+      (setq end (point)))
+    (my/peek--fontify beg end)
+    (narrow-to-region beg end)
+	;; Подчёркивания ошибок. Оверлеи flycheck принадлежат основному
+    ;; буферу, поэтому копируем их сюда для видимого диапазона.
+    (let ((base (buffer-base-buffer)))
+      (when base
+        (dolist (ov (with-current-buffer base (overlays-in beg end)))
+          (when (overlay-get ov 'flycheck-error)
+            (let ((new (make-overlay (max beg (overlay-start ov))
+                                     (min end (overlay-end ov)))))
+              (overlay-put new 'my-peek t)
+              (overlay-put new 'face (overlay-get ov 'face))
+              (overlay-put new 'priority 20))))))
+    ;; пустые строки сверху и снизу у краёв файла
+    (when (< above n)
+      (let ((ov (make-overlay (point-min) (point-min))))
+        (overlay-put ov 'my-peek t)
+        (overlay-put ov 'before-string (make-string (- n above) ?\n))))
+    (when (< below n)
+      (let ((ov (make-overlay (point-max) (point-max))))
+        (overlay-put ov 'my-peek t)
+        (overlay-put ov 'after-string
+                     (concat (make-string (- n below) ?\n) " "))))
+    (let* ((lb (line-beginning-position))
+           (le (min (point-max) (1+ (line-end-position))))
+           (gray (or (my/peek--blend
+                      (or (face-foreground 'default nil t) "#ffffff")
+                      (or (face-background 'default nil t) "#000000")
+                      my/peek-context-dim)
+                     "gray50")))
+      ;; серые боковые строки
+      (dolist (range (list (cons (point-min) lb) (cons le (point-max))))
+        (when (< (car range) (cdr range))
+          (let ((ov (make-overlay (car range) (cdr range))))
+            (overlay-put ov 'my-peek t)
+            (overlay-put ov 'face `(:foreground ,gray))
+            (overlay-put ov 'priority 10))))
+      ;; крупный шрифт у средней строки
+      (let ((ov (make-overlay lb le)))
+        (overlay-put ov 'my-peek t)
+        (overlay-put ov 'face `(:height ,my/peek-scale))
+        (overlay-put ov 'priority 10)))
+    (move-to-column col)
+	(my/peek--trim-indent)
+    (my/peek--note-state)))
+
+(defun my/peek--sync-origin (pos)
+  "Подвести основное окно к POS, чтобы подсветка дошла до строк рамки."
+  (when (window-live-p my/peek--origin-window)
+    (with-selected-window my/peek--origin-window
+      (save-restriction
+        (widen)
+        (goto-char pos)
+        (recenter)
+        (let (b e)
+          (save-excursion
+            (forward-line (- my/peek-context))
+            (setq b (point))
+            (goto-char pos)
+            (forward-line my/peek-context)
+            (end-of-line)
+            (setq e (point)))
+          (jit-lock-fontify-now b e))))))
+
+(defvar my/peek--last-line nil)
+(defvar my/peek--last-count nil)
+
+(defun my/peek--note-state ()
+  "Запомнить, какая строка и сколько строк были при последней отрисовке."
+  (setq my/peek--last-line (line-number-at-pos (point) t)
+        my/peek--last-count (count-lines (point-min) (point-max))))
+
+(defun my/peek--refresh ()
+  "Перерисовать рамку так, чтобы строка с кареткой стала средней."
+  (let ((col (current-column)))
+    (my/peek--sync-origin (point))
+    (my/peek--render col)
+    (let ((w (get-buffer-window (current-buffer) t)))
+      (when w
+        (set-window-start w (point-min))
+        (set-window-point w (point))))
+    (my/peek--reposition)))
+
+(defun my/peek--post-command ()
+  "После команды в рамке: перерисовать при смене строки или числа строк, поправить сдвиг."
+  (when (and (get-buffer my/peek--box)
+             (eq (current-buffer) (get-buffer my/peek--box)))
+    (when (or (not (eql my/peek--last-line (line-number-at-pos (point) t)))
+              (not (eql my/peek--last-count
+                        (count-lines (point-min) (point-max)))))
+      (my/peek--refresh))
+    (my/peek--fix-hscroll)))
+
+(defun my/peek--fix-hscroll ()
+  "Горизонтальный сдвиг рамки: 0, пока каретка помещается; иначе сдвигать рывком, когда она подошла к краю."
+  (let ((w (get-buffer-window my/peek--box t)))
+    (when w
+      (with-current-buffer my/peek--box
+        (let* ((cw (frame-char-width))
+               (bw (window-body-width w t))
+               (margin (* 6 cw))
+               (x (car (window-text-pixel-size
+                        w (line-beginning-position) (point) 100000)))
+               (cur (* (window-hscroll w) cw)))
+          (cond
+           ((< x (- bw margin))
+            (set-window-hscroll w 0))
+           ((or (< x (+ cur margin))
+                (> x (- (+ cur bw) margin)))
+            (set-window-hscroll w (max 0 (/ (- x (/ bw 2)) cw))))))))))
+
+(defun my/peek--reposition ()
+  "Подогнать размер рамки и заново поставить её по центру, не пересоздавая."
+  (let ((buf (get-buffer my/peek--box)))
+    (when buf
+      (let ((pt (with-current-buffer buf (point)))
+            (w (get-buffer-window buf t)))
+        (when w
+          (set-window-start w (with-current-buffer buf (point-min)))
+          (set-window-point w pt))
+        (when (fboundp 'posframe-refresh)
+          (posframe-refresh buf))
+        (let* ((f (buffer-local-value 'posframe--frame buf))
+               (p (and (frame-live-p f) (frame-parent f))))
+          (when p
+            (set-frame-position
+             f
+             (max 0 (/ (- (frame-pixel-width p) (frame-pixel-width f)) 2))
+             (max 0 (/ (- (frame-pixel-height p) (frame-pixel-height f)) 2)))))
+        (when w
+          (set-window-point w pt))
+        (my/peek--fix-hscroll)))))
+
+(defvar my/peek--parent-size nil)
+
+(defun my/peek--on-resize (frame)
+  "При смене размера основного фрейма заново центрировать рамку."
+  (when (and (get-buffer my/peek--box)
+             (window-live-p my/peek--origin-window)
+             (eq frame (window-frame my/peek--origin-window))
+             (not (equal my/peek--parent-size
+                         (cons (frame-pixel-width frame)
+                               (frame-pixel-height frame)))))
+    (setq my/peek--parent-size
+          (cons (frame-pixel-width frame) (frame-pixel-height frame)))
+    (my/peek--reposition)))
+
+
+(defun my/peek-move (n)
+  "Сдвинуть содержимое на N строк, каретка остаётся посередине."
+  (let ((col (current-column)))
+    (widen)
+    (forward-line n)
+	(my/peek--sync-origin (point))
+    (my/peek--render col)
+    (let ((w (get-buffer-window (current-buffer) t)))
+      (when w (set-window-start w (point-min))))
+    (my/peek--reposition)))
+
+(defvar my/peek--exit nil
+  "Функция, снимающая временную раскладку клавиш peek.")
+
+(defun my/peek-up ()
+  (interactive)
+  (with-current-buffer my/peek--box (my/peek-move -1)))
+
+(defun my/peek-down ()
+  (interactive)
+  (with-current-buffer my/peek--box (my/peek-move 1)))
+
+(defun my/peek--show-frame ()
+  "Показать или пересчитать рамку. Размер зависит от масштаба шрифта в ней."
+  (let ((k (with-current-buffer my/peek--box
+             (expt text-scale-mode-step
+                   (or (bound-and-true-p text-scale-mode-amount) 0)))))
+    (posframe-show my/peek--box
+                   :poshandler #'posframe-poshandler-frame-center
+                   :min-width (round (* 60 k))
+                   :max-width (round (* 100 k))
+                   :min-height (round (* (1+ (* 2 my/peek-context)) k))
+                   :lines-truncate t
+                   :internal-border-width 3
+                   :internal-border-color (face-foreground 'default nil t)
+                   :background-color (face-background 'default nil t)
+                   :foreground-color (face-foreground 'default nil t)
+                   :accept-focus t)))
+
+(defun my/peek-zoom (delta)
+  "Изменить шрифт в рамке на DELTA шагов и подогнать размер рамки."
+  (let ((pt (with-current-buffer my/peek--box
+              (text-scale-increase delta)
+              (point))))
+    (my/peek--show-frame)
+    ;; posframe сбрасывает позицию в окне, возвращаем на прежнюю строку
+    (let ((w (get-buffer-window my/peek--box t)))
+      (when w
+        (set-window-start w (with-current-buffer my/peek--box (point-min)))
+        (set-window-point w pt)))))
+
+(defun my/peek-bigger ()
+  (interactive)
+  (my/peek-zoom 1))
+
+(defun my/peek-smaller ()
+  (interactive)
+  (my/peek-zoom -1))
+
+(defun my/peek-close ()
+  "Закрыть рамку, снять затемнение, вернуть каретку на выбранную строку."
+  (interactive)
+  (let ((pos (if (buffer-live-p (get-buffer my/peek--box))
+                 (with-current-buffer my/peek--box (point))
+               (point))))
+    (my/peek--undim-buffers)
+    (when my/peek--exit
+      (ignore-errors (funcall my/peek--exit))
+      (setq my/peek--exit nil))
+    (ignore-errors (posframe-hide my/peek--box))
+    (when (get-buffer my/peek--box)
+      (kill-buffer my/peek--box))
+    (when (window-live-p my/peek--origin-window)
+      (let ((frame (window-frame my/peek--origin-window)))
+        (select-frame-set-input-focus frame)
+        (select-window my/peek--origin-window)
+        (goto-char pos)
+        ;; Повторный запрос фокуса, когда X/i3 уже обработали скрытие рамки.
+        (run-with-timer 0.1 nil
+                        (lambda (f)
+                          (when (frame-live-p f)
+                            (select-frame-set-input-focus f)))
+                        frame)))))
+
+(defun my/peek--normal-only (cmd)
+  "Вернуть CMD только в normal state; иначе nil, и клавиша пойдёт как обычный ввод."
+  (and (eq (bound-and-true-p evil-state) 'normal) cmd))
+
+(defconst my/peek-map
+  (let ((map (make-sparse-keymap)))
+    ;; всегда закрывают
+    (dolist (k '("C-g" "<f8>"))
+      (define-key map (kbd k) #'my/peek-close))
+    ;; закрывают только в normal state; в insert Esc выходит из insert, q печатается
+    (dolist (k '("<escape>" "q"))
+      (define-key map (kbd k)
+        '(menu-item "" my/peek-close :filter my/peek--normal-only)))
+    ;; стрелки двигают всегда
+    (define-key map (kbd "<up>") #'my/peek-up)
+    (define-key map (kbd "<down>") #'my/peek-down)
+    ;; j и k двигают только в normal state
+    (define-key map (kbd "k")
+      '(menu-item "" my/peek-up :filter my/peek--normal-only))
+    (define-key map (kbd "j")
+      '(menu-item "" my/peek-down :filter my/peek--normal-only))
+    ;; масштаб рамки вместе с шрифтом (только в normal state)
+    (dolist (k '("+" "="))
+      (define-key map (kbd k)
+        '(menu-item "" my/peek-bigger :filter my/peek--normal-only)))
+    (define-key map (kbd "-")
+      '(menu-item "" my/peek-smaller :filter my/peek--normal-only))
+    ;; колесо мыши: одна ступень = одна строка, как j/k
+    (dolist (k '("<wheel-up>" "<mouse-4>"
+                 "<double-wheel-up>" "<triple-wheel-up>"))
+      (define-key map (kbd k) #'my/peek-up))
+    (dolist (k '("<wheel-down>" "<mouse-5>"
+                 "<double-wheel-down>" "<triple-wheel-down>"))
+      (define-key map (kbd k) #'my/peek-down))
+    ;; горизонтальную прокрутку колесом в рамке гасим
+    (dolist (k '("<wheel-left>" "<wheel-right>"))
+      (define-key map (kbd k) #'ignore))
+    map))
+
+(defvar my/peek--mid nil
+  "Позиция каретки на средней строке в буфере рамки.")
+  
+;; Отступ строки делает основной буфер: у indirect-буфера нет функции отступа режима.
+(defun my/indent-line-by-previous ()
+  "Отступ по предыдущей непустой строке: +1 уровень после открывающей скобки, -1 перед закрывающей. Строку пропускает, если слева от каретки уже есть текст (кроме строк, начинающихся с закрывающей скобки). Каретка остаётся на месте, если была правее отступа. Невидимый текст (скрытый отступ peek) при расчёте не учитывается."
+  (unless (and (save-excursion
+                 (skip-chars-backward " \t")
+                 (not (bolp)))
+               (not (save-excursion
+                      (beginning-of-line)
+                      (looking-at "[ \t]*[])}]"))))
+    (let* ((buffer-invisibility-spec nil)
+           (unit (if indent-tabs-mode
+                     tab-width
+                   (or (and (boundp 'rust-indent-offset) rust-indent-offset)
+                       standard-indent)))
+           (target
+            (save-excursion
+              (save-restriction
+                (widen)
+                (beginning-of-line)
+                (let ((closer (looking-at "[ \t]*[])}]")))
+                  (if (re-search-backward "[^ \t\n]" nil t)
+                      (max 0 (+ (current-indentation)
+                                (if (looking-at "[[{(]") unit 0)
+                                (if closer (- unit) 0)))
+                    0)))))
+           (pos (- (point-max) (point))))
+      (indent-line-to target)
+      (when (> (- (point-max) pos) (point))
+        (goto-char (- (point-max) pos))))))
+  
+;; Включает smartparens в indirect-буфере и подтягивает пары и синтаксис режима исходного буфера.
+(defun my/peek--enable-sp (origin)
+  (when (fboundp 'smartparens-mode)
+    (let ((modes (list (buffer-local-value 'major-mode origin))))
+      (while (get (car modes) 'derived-mode-parent)
+        (push (get (car modes) 'derived-mode-parent) modes))
+      (set-syntax-table (with-current-buffer origin (syntax-table)))
+	  (setq-local indent-line-function #'my/indent-line-by-previous)
+      (smartparens-mode 1)
+      (dolist (m modes)
+        (sp-update-local-pairs m)))))
+
+(defun my/peek-line ()
+  "Открыть рамку с кареткой и соседними строками; повторный вызов закрывает."
+  (interactive)
+  (if (get-buffer my/peek--box)
+      (my/peek-close)
+    (my/peek--undim-buffers)
+    (setq my/peek--origin-window (selected-window))
+    (let ((origin (current-buffer))
+          (pt (point)))
+      ;;(with-current-buffer (make-indirect-buffer origin my/peek--box nil t)
+        ;;(goto-char pt)
+        ;;(setq-local mode-line-format nil
+                    ;;header-line-format nil
+                    ;;truncate-lines t
+                    ;;scroll-margin 0)
+      (with-current-buffer (make-indirect-buffer origin my/peek--box nil nil)
+        (goto-char pt)
+		(my/peek--enable-sp origin)
+		;; Настройки отступов берём из исходного буфера
+        (dolist (v '(tab-width indent-tabs-mode standard-indent
+                     evil-shift-width evil-auto-indent
+                     rust-indent-offset c-basic-offset
+                     python-indent-offset js-indent-level
+                     tab-always-indent))
+          (when (boundp v)
+            (set (make-local-variable v) (buffer-local-value v origin))))
+        (setq-local mode-line-format nil
+                    header-line-format nil
+                    truncate-lines t
+					auto-hscroll-mode nil
+                    scroll-margin 0)
+        ;; Правки в этом буфере не запускают хуки основного буфера,
+        ;; поэтому LSP о них не узнает. Передаём уведомления вручную.
+        (add-hook 'before-change-functions
+                  (lambda (beg end)
+                    (let ((base (buffer-base-buffer)))
+                      (when base
+                        (with-current-buffer base
+                          (run-hook-with-args 'before-change-functions beg end)))))
+                  nil t)
+        (add-hook 'after-change-functions
+                  (lambda (beg end len)
+                    (let ((base (buffer-base-buffer)))
+                      (when base
+                        (with-current-buffer base
+                          (run-hook-with-args 'after-change-functions beg end len)))))
+                  nil t)
+        (when (bound-and-true-p evil-mode)
+          (evil-local-mode 1)
+          (evil-normal-state))
+		(add-hook 'post-command-hook #'my/peek--post-command nil t)
+		(my/peek--sync-origin (point))
+        (my/peek--render (current-column))
+        (setq my/peek--mid (point)))
+      (my/peek--dim-buffers)
+      (setq my/peek--exit
+            (set-transient-map my/peek-map
+                               (lambda () (and (get-buffer my/peek--box) t))))
+      (let ((frame (my/peek--show-frame)))
+        ;; posframe ставит точку окна в начало буфера; возвращаем на среднюю строку
+        (let ((w (get-buffer-window my/peek--box t)))
+          (when (and w my/peek--mid)
+            (set-window-start w (with-current-buffer my/peek--box (point-min)))
+            (set-window-point w my/peek--mid)))
+		(my/peek--fix-hscroll)
+        (select-frame-set-input-focus frame)))))
+
+(defun my/peek--trim-ok (beg end)
+  "Не стричь диапазон, в котором каретка рамки."
+  (let ((box (get-buffer my/peek--box)))
+    (not (and box
+              (<= beg (with-current-buffer box (point)) end)))))
+
+
+(defun my/ws-trim-ok (beg end)
+  "Чистить хвостовые пробелы после текста и всё после последнего непробельного символа файла. Строки из одних отступов в середине кода не трогать. Участок с кареткой peek не трогать."
+  (and (my/peek--trim-ok beg end)
+       (save-excursion
+         (goto-char end)
+         (skip-chars-forward " \t\r\n")
+         (or (eobp)
+             (progn
+               (goto-char beg)
+               (not (bolp)))))))
+
+(after! ws-butler
+  (setq ws-butler-trim-predicate #'my/ws-trim-ok))
+
+(map! :leader :desc "Peek line" "o l" #'my/peek-line)
+(map! :nvi "<f8>" #'my/peek-line)
+(add-hook 'window-size-change-functions #'my/peek--on-resize)
+
+;; Вставка пустой строки с отступом без входа в insert (глобально)
+(defun my/blank-line-below ()
+  "Пустая строка с отступом ниже текущей; каретка на ней, normal state."
+  (interactive)
+  (end-of-line)
+  (newline)
+  (my/indent-line-by-previous))
+
+(defun my/blank-line-above ()
+  "Пустая строка с отступом выше текущей; каретка на ней, normal state."
+  (interactive)
+  (beginning-of-line)
+  (newline)
+  (forward-line -1)
+  (my/indent-line-by-previous))
+
+(map! :ni "M-o" #'my/blank-line-below
+      :ni "M-O" #'my/blank-line-above)
+	  
+
+;; Единый расчёт отступа для o, O, RET в программных режимах
+(defun my/use-common-indent ()
+  (when (derived-mode-p 'prog-mode)
+    (setq-local indent-line-function #'my/indent-line-by-previous)))
+(add-hook 'after-change-major-mode-hook #'my/use-common-indent)
+
+;; Не стирать автоотступ на пустой строке при выходе из insert
+(advice-add 'evil-maybe-remove-spaces :override #'ignore)
+
+;; Rust: не парить ' внутри угловых скобок: <'a, Foo<'a, 'b>
+(defun my/sp-rust-lifetime-p (id action context)
+  "Истина, если ' набирается внутри угловых скобок."
+  (when (eq action 'insert)
+    (save-excursion
+      (let* ((qpos (- (point) (length id)))
+             (prev (and (> qpos (point-min)) (char-before qpos)))
+             (bol (progn (goto-char qpos) (line-beginning-position))))
+        (or (eq prev ?<)
+            (and (memq prev '(?\s ?,))
+                 (> (- (how-many "<" bol qpos)
+                       (how-many "[^-]>" bol qpos))
+                    0)))))))
+
+(after! smartparens
+  (sp-local-pair '(rust-mode rustic-mode) "'" "'"
+                 :unless '(:add my/sp-rust-lifetime-p)))
+				 
+				 
+;; ВРЕМЕННАЯ отладка 2, потом удалить.
+(defun my/dbg-change (beg end len)
+  (when (equal (buffer-name) "*peek-box*")
+    (message "CHG %d-%d len=%d new=%S line=%S callers=%S"
+             beg end len
+             (buffer-substring-no-properties beg end)
+             (buffer-substring-no-properties
+              (line-beginning-position) (line-end-position))
+             (let (r)
+               (mapbacktrace
+                (lambda (_e f _a _fl)
+                  (when (and (symbolp f)
+                             (not (memq f '(mapbacktrace let message
+                                            my/dbg-change apply funcall
+                                            run-hook-with-args
+                                            run-hooks progn if when
+                                            let* unless and or))))
+                    (push f r))))
+               (seq-take (nreverse r) 12)))))
+(add-hook 'after-change-functions #'my/dbg-change)
+
+;;; ------------------------------------------------------------------
+;;; Восстановление последнего рабочего пространства после загрузки сессии.
+;;; ------------------------------------------------------------------
+(defun my/last-workspace-file ()
+  (expand-file-name "last-workspace" persp-save-dir))
+
+(defun my/save-last-workspace (&rest _)
+  (ignore-errors
+    (with-temp-file (my/last-workspace-file)
+      (insert (+workspace-current-name)))))
+
+(defun my/restore-last-workspace (&rest _)
+  (let ((file (my/last-workspace-file)))
+    (when (file-readable-p file)
+      (let ((name (with-temp-buffer
+                    (insert-file-contents file)
+                    (string-trim (buffer-string)))))
+        (when (+workspace-exists-p name)
+          (+workspace-switch name))))))
+
+(after! persp-mode
+  (add-hook 'persp-before-save-state-to-file-functions #'my/save-last-workspace))
+
+(advice-add 'doom-load-session :after #'my/restore-last-workspace)
+
+;;; ------------------------------------------------------------------
+;;; Прочее
+;;; ------------------------------------------------------------------
+(use-package! hs-indent-fold
+    :hook (prog-mode . hs-indent-fold-mode))
+
+
+;;; ------------------------------------------------------------------
+;;; Запоминание свёрнутых блоков (hideshow) между сеансами.
+;;; ------------------------------------------------------------------
+(defvar my/hs-folds-file (expand-file-name "hs-folds.eld" doom-data-dir)
+  "Файл, где хранятся свёрнутые блоки по файлам.")
+(defvar my/hs-folds--table nil)
+(defvar my/hs-folds--loaded nil)
+
+(defun my/hs-folds--load ()
+  (unless my/hs-folds--loaded
+    (setq my/hs-folds--loaded t
+          my/hs-folds--table
+          (when (file-readable-p my/hs-folds-file)
+            (ignore-errors
+              (with-temp-buffer
+                (insert-file-contents my/hs-folds-file)
+                (read (current-buffer))))))))
+
+(defun my/hs-folds--write ()
+  (ignore-errors
+    (make-directory (file-name-directory my/hs-folds-file) t)
+    (with-temp-file my/hs-folds-file
+      (let (print-length print-level)
+        (prin1 my/hs-folds--table (current-buffer))))))
+
+(defun my/hs-folds--line-text ()
+  (string-trim (buffer-substring-no-properties
+                (line-beginning-position) (line-end-position))))
+
+(defun my/hs-folds--collect ()
+  "Список (СТРОКА . ТЕКСТ) для всех свёрнутых блоков текущего буфера."
+  (save-restriction
+    (widen)
+    (let (res)
+      (dolist (ov (overlays-in (point-min) (point-max)))
+        (when (and (overlay-get ov 'hs)
+                   (eq (overlay-get ov 'invisible) 'hs))
+          (save-excursion
+            (goto-char (overlay-start ov))
+            (push (cons (line-number-at-pos) (my/hs-folds--line-text)) res))))
+      (sort res (lambda (a b) (< (car a) (car b)))))))
+
+(defun my/hs-folds--save-buffer ()
+  (when (and buffer-file-name (bound-and-true-p hs-minor-mode))
+    (my/hs-folds--load)
+    (let ((key (file-truename buffer-file-name))
+          (folds (my/hs-folds--collect)))
+      (setq my/hs-folds--table
+            (cl-remove key my/hs-folds--table :key #'car :test #'equal))
+      (when folds
+        (push (cons key folds) my/hs-folds--table)))))
+
+(defun my/hs-folds--on-kill-buffer ()
+  (when (and buffer-file-name (bound-and-true-p hs-minor-mode))
+    (my/hs-folds--save-buffer)
+    (my/hs-folds--write)))
+
+(defun my/hs-folds--on-kill-emacs ()
+  (dolist (b (buffer-list))
+    (with-current-buffer b (my/hs-folds--save-buffer)))
+  (my/hs-folds--write))
+
+(defun my/hs-folds--restore ()
+  "Свернуть блоки, которые были свёрнуты в прошлый раз."
+  (when (and hs-minor-mode buffer-file-name)
+    (my/hs-folds--load)
+    (let ((folds (cdr (assoc (file-truename buffer-file-name)
+                             my/hs-folds--table))))
+      (when folds
+        (save-excursion
+          (save-restriction
+            (widen)
+            (dolist (f (reverse folds))
+              (goto-char (point-min))
+              (when (and (zerop (forward-line (1- (car f))))
+                         (string= (my/hs-folds--line-text) (cdr f)))
+                (ignore-errors (hs-hide-block))))))))))
+
+(add-hook 'kill-buffer-hook #'my/hs-folds--on-kill-buffer)
+(add-hook 'kill-emacs-hook #'my/hs-folds--on-kill-emacs)
+(add-hook 'hs-minor-mode-hook #'my/hs-folds--restore)
+
+
+
+
+        
+;;; Rust Cargo
+;; Управление Rust-проектами через Cargo.
+;; Маленькая буква r — обычный режим разработки.
+;; Большая R — Release-режим.
+
+(after! rustic
+  (map! :localleader
+        ;; Обычный режим разработки.
+        :prefix ("r" . "Rust")
+        "b" #'rustic-cargo-build
+        "r" #'rustic-cargo-run
+        "t" #'rustic-cargo-test
+        "c" #'rustic-cargo-clippy
+
+        ;; Отладка (dap-mode, настройка в блоке ниже).
+        ;; Запуск отладки Rust: SPC m r d.
+        ;; Выбирается шаблон запуска из списка адаптера.
+        "d" #'+rust/debug
+        ;; Поставить или снять брейкпоинт на текущей строке.
+        "B" #'dap-breakpoint-toggle
+        ;; Завершить сессию отладки.
+        "q" #'dap-disconnect)
+
+  ;; Release-сборка.
+  ;; Отдельная ветка, не вложенная в Rust-префикс.
+  (map! :localleader
+        "R" (cons "Release Build"
+                  (cmd! (rustic-cargo-build "--release")))))
+
+
+;;; Rust Debugger (dap-mode)
+;; dap-mode Doom больше не ставит сам, он подключён вручную
+;; через packages.el. Работает только поверх lsp-mode, поэтому
+;; в init.el нужен (lsp +peek), а не (lsp +eglot).
+
+(use-package! dap-mode
+  :after lsp-mode
+  :config
+  ;; Адаптер GDB/LLDB (Native Debug), он показан в галерее
+  ;; dap-mode для Rust. Скачивается один раз командой
+  ;; M-x dap-gdb-lldb-setup, без неё шаблоны запуска не заработают.
+  (require 'dap-lldb)
+  (setq dap-lldb-debug-program '("/usr/bin/lldb-dap"))
+  (setq dap-lldb-debugged-program-function #'+rust/debug-binary)
+
+
+
+  ;; Какие визуальные панели включать:
+  ;;   sessions    список сессий (Debug Sessions)
+  ;;   locals      локальные переменные текущего фрейма
+  ;;   breakpoints список брейкпоинтов
+  ;;   expressions панель watch-выражений
+  ;;   controls    панель кнопок (continue, step и т. д.)
+  (setq dap-auto-configure-features
+        '(sessions locals breakpoints expressions controls))
+
+  ;; Положение панели кнопок. Берётся из posframe,
+  ;; поэтому он нужен в packages.el.
+  (setq dap-ui-controls-screen-position
+        #'posframe-poshandler-frame-top-center)
+
+  ;; Включить dap-mode вместе с панелями из списка выше.
+  ;; Без этого вызова панели не появятся.
+  (dap-auto-configure-mode 1))
+  
+
+;;; Rust: сборка и запуск отладки одним хоткеем
+
+(defun +rust/debug-binary ()
+  "Собрать проект (cargo build) и вернуть путь к бинарнику.
+Если бинарников несколько, спросит, какой запускать.
+Emacs блокируется на время сборки."
+  (let* ((default-directory (or (doom-project-root) default-directory))
+         (exes nil))
+    (with-temp-buffer
+      ;; stdout (JSON) в буфер, stderr отбрасываем.
+      (unless (zerop (call-process "cargo" nil (list t nil) nil
+                                   "build" "--message-format=json"))
+        (user-error "cargo build упал, ошибки смотрите через SPC m r b"))
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties
+                     (line-beginning-position) (line-end-position))))
+          ;; Каждая строка вывода cargo — отдельный JSON-объект.
+          ;; Нас интересуют artifact-сообщения с непустым executable.
+          (when (string-prefix-p "{" line)
+            (let* ((msg (json-parse-string line :object-type 'alist
+                                                :null-object nil))
+                   (exe (alist-get 'executable msg)))
+              (when (and exe (equal (alist-get 'reason msg) "compiler-artifact"))
+                (push exe exes)))))
+        (forward-line 1)))
+    (setq exes (delete-dups (nreverse exes)))
+    (pcase (length exes)
+      (0 (user-error "Cargo не собрал ни одного бинарника"))
+      (1 (car exes))
+      (_ (completing-read "Бинарник: " exes nil t)))))
+
+(defun +rust/debug ()
+  "Сохранить файлы, собрать проект и сразу запустить отладку."
+  (interactive)
+  (save-some-buffers t)
+  ;; :program nil заставляет dap-lldb вызвать
+  ;; dap-lldb-debugged-program-function (см. блок dap-mode ниже),
+  ;; а он собирает проект и возвращает путь к бинарнику.
+  (dap-debug (list :type "lldb-vscode"
+                   :request "launch"
+                   :name "Rust::Run"
+                   :cwd (or (doom-project-root) default-directory)
+                   :program nil)))
+
+
+(after! lsp-ui
+  ;; Doom отключает всплывающую документацию, включаем.
+  (setq lsp-ui-doc-enable t
+        ;; Показывать при наведении мыши, как в VS Code.
+        lsp-ui-doc-show-with-mouse t
+        ;; При движении курсора клавиатуры не показывать.
+        lsp-ui-doc-show-with-cursor nil
+        ;; Doom задаёт окно 35x8 символов, длинная документация
+        ;; в нём обрезается, поэтому увеличиваем.
+        lsp-ui-doc-max-width 100
+        lsp-ui-doc-max-height 20))
+		

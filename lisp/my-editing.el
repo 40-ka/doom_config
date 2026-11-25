@@ -68,7 +68,8 @@
 
 (after! smartparens
   (dolist (mode '(rust-mode rustic-mode rust-ts-mode))
-    (sp-local-pair mode "{" nil :post-handlers '(("||\n[i]" "RET")))))
+    (sp-local-pair mode "{" nil :post-handlers '(:rem ("||\n[i]" "RET")))))
+
 
 
 
@@ -171,3 +172,110 @@
   (define-key evil-visual-state-map (kbd "<backtab>") #'my/dedent-visual)
   (define-key evil-insert-state-map (kbd "<backtab>")
     '(menu-item "" my/dedent-region :filter my/dedent--when-region)))
+	
+	
+	
+	
+(defun my/ret-expand-braces (orig-fn &rest args)
+  "Раскрывать {} в 3 строки по RET с точным отступом +tab-width внутри."
+  (if (and (eq (char-before) ?{)
+           (eq (char-after) ?})
+           (or (derived-mode-p 'prog-mode)
+               (equal (buffer-name) "*peek-box*")))
+      (let* ((base-indent (current-indentation))
+             (step (or (and (boundp 'evil-shift-width) evil-shift-width)
+                       tab-width
+                       4))
+             (inner-indent (+ base-indent step)))
+        (insert "\n")
+        (indent-to inner-indent)
+        (save-excursion
+          (insert "\n")
+          (indent-to base-indent)))
+    (apply orig-fn args)))
+
+
+(advice-add 'newline :around #'my/ret-expand-braces)
+
+(defun my/collapse-empty-braces-after-delete (&rest _args)
+  "Если после удаления между { и } остались только пробелы/переносы — схлопнуть в {}."
+  (when (and (or (derived-mode-p 'prog-mode)
+                 (equal (buffer-name) "*peek-box*"))
+             (eq (char-before) ?{))
+    (save-excursion
+      (let ((start (point)))
+        (skip-chars-forward " \t\n")
+        (when (and (> (point) start)
+                   (eq (char-after) ?}))
+          (delete-region start (point)))))))
+
+(dolist (fn '(delete-char
+              delete-forward-char
+              backward-delete-char
+              backward-delete-char-untabify
+              sp-backward-delete-char
+              sp-delete-char
+              evil-delete-char))
+  (advice-add fn :after #'my/collapse-empty-braces-after-delete))
+
+
+(defvar-local my/fill-ovs nil)
+
+(defun my/fill-runner (flag &optional arg)
+  "Runner for :Fill live preview in `evil-ex-original-buffer'."
+  (when (buffer-live-p evil-ex-original-buffer)
+    (with-current-buffer evil-ex-original-buffer
+      (mapc #'delete-overlay my/fill-ovs)
+      (setq my/fill-ovs nil)
+      (when (eq flag 'start)
+        (setq flag 'update))
+      (when (and (eq flag 'update)
+                 (stringp arg)
+                 (string-match "^\\([^ ]+\\) +\\([^ ]+\\) +\\(.*\\)$" arg))
+        (cl-destructuring-bind (beg end &rest)
+            (if evil-ex-range
+                (evil-expand-range evil-ex-range t)
+              (evil-range (line-beginning-position) (line-end-position) 'line :expanded t))
+          (let ((l (match-string 1 arg))
+                (r (match-string 2 arg))
+                (vals (split-string (match-string 3 arg) "\\\\")))
+            (save-excursion
+              (goto-char beg)
+              (while (and vals (search-forward (concat l r) end t))
+                (let ((ov (make-overlay (match-beginning 0) (match-end 0))))
+                  (overlay-put ov 'display (propertize (concat l (pop vals) r)
+                                                       'face 'evil-ex-substitute-replacement))
+                  (push ov my/fill-ovs))))))))))
+
+(after! evil-ex
+  (evil-ex-define-argument-type my-fill
+    "Argument handler for :Fill command."
+    :runner my/fill-runner)
+
+  ;; Это и есть исправление: свой интерактивный код, который подключает
+  ;; обработчик my-fill (вместо <a>, который его перезаписывал).
+  (evil-define-interactive-code "<fill>"
+    "Ex argument for :Fill (selects the `my-fill' argument handler)."
+    :ex-arg my-fill
+    (list (when evil-called-from-ex-p evil-ex-argument)))
+
+  (evil-define-command my/fill-between (beg end args)
+    "Fill empty LEFT RIGHT pairs in range BEG..END with backslash-separated ARGS."
+    (interactive "<r><fill>")
+    (if (and args (string-match "^\\([^ ]+\\) +\\([^ ]+\\) +\\(.*\\)$" args))
+        (let* ((l (match-string 1 args))
+               (r (match-string 2 args))
+               (vals (split-string (match-string 3 args) "\\\\"))
+               (end-m (copy-marker end)))
+          (save-excursion
+            (goto-char beg)
+            (while (and vals (search-forward (concat l r) end-m t))
+              (replace-match (concat l (pop vals) r) t t)))
+          (set-marker end-m nil))
+      (user-error "Формат: :Fill <лев> <прав> <знач1>\\<знач2>")))
+
+  (evil-ex-define-cmd "Fill" 'my/fill-between))
+
+
+
+

@@ -40,22 +40,37 @@
       (apply fn args)))
   (advice-add 'sp-delete-pair :around #'my/sp-delete-pair-indent-match))
 
+(defun my/sp-rust-lifetime-p (&rest _args)
+  "Не закрывать ' в контексте Rust lifetime (после & или после открывающей < на строке)."
+  (or (save-excursion
+        (skip-chars-backward "a-zA-Z0-9_")
+        (eq (char-before) ?&))
+      (save-excursion
+        (let ((bol (line-beginning-position)))
+          (and (re-search-backward "[<>]" bol t)
+               (eq (char-after) ?<))))))
+
 (defun my/disable-rust-angle-pair ()
   (when (bound-and-true-p smartparens-mode)
-    (sp-local-pair major-mode "<" ">" :actions nil)
     (setq-local sp-local-pairs
-                (mapcar (lambda (p)
-                          (if (equal (plist-get p :open) "<")
-                              (plist-put (copy-sequence p) :actions nil)
-                            p))
-                        sp-local-pairs))))
-
+                (cl-remove-if (lambda (p) (equal (plist-get p :open) "<"))
+                              sp-local-pairs))
+    (when (derived-mode-p 'rust-mode 'rustic-mode 'rust-ts-mode)
+      (setq-local sp-local-pairs
+                  (mapcar (lambda (p)
+                            (if (equal (plist-get p :open) "'")
+                                (let* ((copy (copy-sequence p))
+                                       (unless-list (plist-get copy :unless)))
+                                  (plist-put copy :unless
+                                             (cl-adjoin #'my/sp-rust-lifetime-p unless-list)))
+                              p))
+                          sp-local-pairs)))))
 
 (after! smartparens
   (dolist (mode '(rust-mode rustic-mode rust-ts-mode))
-    (when (fboundp 'my/sp-rust-lifetime-p)
-      (sp-local-pair mode "'" "'" :unless '(:add my/sp-rust-lifetime-p)))
     (sp-local-pair mode "{" nil :post-handlers '(("||\n[i]" "RET")))))
+
+
 
 (add-hook 'smartparens-enabled-hook #'my/disable-rust-angle-pair 95)
 

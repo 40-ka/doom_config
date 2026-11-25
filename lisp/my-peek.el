@@ -392,11 +392,18 @@
   (when (fboundp 'smartparens-mode)
     (set-syntax-table (with-current-buffer origin (syntax-table)))
     (setq-local parse-sexp-lookup-properties t)
+    (dolist (v '(syntax-propertize-function
+                 syntax-propertize-extend-region-functions
+                 comment-start comment-end comment-start-skip
+                 comment-continue comment-padding))
+      (when (local-variable-p v origin)
+        (set (make-local-variable v) (buffer-local-value v origin))))
     (setq-local indent-line-function #'my/indent-line-by-previous)
     (smartparens-mode 1)
     ;; Пары берём готовым списком из основного буфера, чтобы поведение совпадало.
     (setq-local sp-local-pairs
                 (copy-tree (buffer-local-value 'sp-local-pairs origin)))))
+
 
 
 (defun my/peek-line ()
